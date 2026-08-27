@@ -1,0 +1,22 @@
+{
+  "tableName": "quotes",
+  "startUrls": ["https://quotes.toscrape.com"],
+  "itemSelector": ".quote",
+  "fields": {
+    "text": ".text",
+    "author": ".author",
+    "author_url": {
+      "selector": ".author + a",
+      "attribute": "href"
+    },
+    "tags": ".tags"
+  },
+  "pagination": {
+    "nextPageSelector": "li.next > a"
+  },
+  "options": {
+    "concurrency": 2,
+    "delayMs": 150,
+    "maxPagesTotal": 3
+  }
+}

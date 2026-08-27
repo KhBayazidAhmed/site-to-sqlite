@@ -1,0 +1,17 @@
+{
+  "name": "site-to-sqlite",
+  "version": "1.0.0",
+  "description": "Token-efficient web reconnaissance, pattern discovery, and polite SQLite scraper powered by Bun",
+  "type": "module",
+  "scripts": {
+    "recon": "bun run scripts/recon.ts",
+    "scrape": "bun run scripts/scrape.ts",
+    "inspect": "bun run scripts/inspect-db.ts"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0-rc.12"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}

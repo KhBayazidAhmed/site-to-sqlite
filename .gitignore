@@ -1,0 +1,11 @@
+node_modules/
+bun.lockb
+bun.lock
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3
+*.db
+*.csv
+*.log
+.DS_Store
