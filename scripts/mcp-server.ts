@@ -1,18 +1,31 @@
 #!/usr/bin/env bun
 import { runRecon } from "./recon";
+import { runDiscovery } from "./discover";
 import { PoliteScraper, type ExtractorConfig } from "./scrape";
 import { Database } from "bun:sqlite";
 import * as readline from "readline";
 
 const SERVER_NAME = "site-to-sqlite-mcp";
-const SERVER_VERSION = "1.0.0";
+const SERVER_VERSION = "1.2.0";
 const PROTOCOL_VERSION = "2024-11-05";
 
 const TOOLS = [
   {
+    name: "site_discover",
+    description:
+      "[Step 1 Discovery] Deeply inspects a target website to discover all extractable data entities, repeating cards/lists, HTML tables, Schema.org JSON-LD, Next.js hydration props, and candidate fields with live sample values and confidence metrics. Use this first to formulate a candidate data proposal for user review/confirmation before scraping.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "Target website URL to inspect (e.g. https://example.com)" },
+      },
+      required: ["url"],
+    },
+  },
+  {
     name: "site_recon",
     description:
-      "Performs deep website reconnaissance without heavy token usage. Probes robots.txt, sitemaps (including .xml.gz), RSS/Atom feeds, Next.js __NEXT_DATA__ / Nuxt hydration state, and Schema.org JSON-LD structured data.",
+      "Performs deep website network reconnaissance without heavy token usage. Probes robots.txt, sitemaps (including .xml.gz), RSS/Atom feeds, Next.js __NEXT_DATA__ / Nuxt hydration state, and Schema.org JSON-LD structured data.",
     inputSchema: {
       type: "object",
       properties: {
@@ -25,14 +38,14 @@ const TOOLS = [
   {
     name: "site_scrape",
     description:
-      "Executes a high-speed, polite web scrape into a local SQLite database using Bun, dynamic column evolution, rate-limiting jitter, and checkpoint/resume.",
+      "[Step 2 Scrape] Executes a high-speed, polite web scrape into a local SQLite database using Bun, dynamic column evolution, rate-limiting jitter, and checkpoint/resume.",
     inputSchema: {
       type: "object",
       properties: {
         config: {
           type: "object",
           description:
-            "Extraction configuration JSON (specifying tableName, startUrls, itemSelector, fields, pagination, and options).",
+            "Extraction configuration JSON (specifying tableName, startUrls, itemSelector, fields, pagination, detailPage, and options).",
         },
         dbPath: {
           type: "string",
@@ -62,6 +75,18 @@ const TOOLS = [
 ];
 
 async function handleToolCall(name: string, args: any): Promise<any> {
+  if (name === "site_discover") {
+    const report = await runDiscovery(args.url);
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(report, null, 2),
+        },
+      ],
+    };
+  }
+
   if (name === "site_recon") {
     const report = await runRecon({
       url: args.url,
@@ -140,7 +165,7 @@ async function handleToolCall(name: string, args: any): Promise<any> {
         const samples = sampleLimit > 0 ? db.prepare(`SELECT * FROM "${tblName}" LIMIT ?;`).all(sampleLimit) : [];
 
         summary[tblName] = {
-          totalRows: countRow.count,
+          totalRows: countRow?.count ?? 0,
           columns: cols.map((c) => `${c.name} (${c.type})`),
           samples,
         };
@@ -225,7 +250,6 @@ rl.on("line", async (line) => {
     }
 
     if (method === "notifications/initialized") {
-      // No response needed for notifications
       return;
     }
 

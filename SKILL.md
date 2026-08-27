@@ -5,12 +5,14 @@ description: Universal token-efficient web reconnaissance, pattern discovery, an
 
 # Site-to-SQLite Universal Web Reconnaissance & Extraction Engine
 
-Perform token-efficient, high-speed website reconnaissance and polite data extraction into local SQLite databases using the pre-bundled Bun scripts.
+Perform token-efficient, high-speed website inspection, candidate data discovery, and polite extraction into local SQLite databases using pre-bundled Bun scripts.
 
 ## Golden Rules
-1. **Never dump full HTML into LLM context**: Use `recon` to discover patterns and `scrape` to crawl and extract data directly on the machine.
-2. **Be polite to target servers**: Keep default concurrency between 2–5 workers with 150–300ms jitter delay. Never hammer target endpoints with abusive bursts.
-3. **Always inspect and verify**: After extraction, run `inspect` to verify row counts, schema correctness, and present clear summary metrics.
+1. **Never dump full HTML into LLM context**: Use `discover` to identify patterns and fields, and `scrape` to crawl and extract data directly on the machine.
+2. **Follow the 2-Step Workflow**:
+   - **Step 1 (Inspect & Propose)**: Inspect the target URL, discover repeating items/tables/fields, generate a candidate proposal with sample data previews, and request user confirmation.
+   - **Step 2 (Execute Scrape)**: Scrape into SQLite based on the confirmed configuration, inspect data counts, and export to CSV/JSON if requested.
+3. **Be polite to target servers**: Keep default concurrency between 2–5 workers with 150–300ms jitter delay. Never hammer target endpoints with abusive bursts.
 
 ---
 
@@ -18,83 +20,60 @@ Perform token-efficient, high-speed website reconnaissance and polite data extra
 
 | Command | Purpose | Example |
 |---|---|---|
-| `site-to-sqlite recon` | Site overview, sitemap crawler, framework & structured data detector | `bun run bin/site-to-sqlite.ts recon "https://example.com"` |
-| `site-to-sqlite scrape` | High-speed crawler engine with `bun:sqlite`, checkpoint/resume, auto-schema evolution | `bun run bin/site-to-sqlite.ts scrape --config <config.json> --db <output.sqlite>` |
+| `site-to-sqlite discover` | [Step 1] Deep DOM inspection, repeating candidate discovery, field selector synthesis & sample preview | `bun run bin/site-to-sqlite.ts discover "https://example.com" -o config.json` |
+| `site-to-sqlite scrape` | [Step 2] High-speed crawler engine with `bun:sqlite`, checkpoint/resume, auto-schema evolution | `bun run bin/site-to-sqlite.ts scrape --config <config.json> --db <output.sqlite>` |
+| `site-to-sqlite wizard` | Interactive 2-step wizard CLI (inspect $\rightarrow$ confirm $\rightarrow$ scrape) | `bun run bin/site-to-sqlite.ts wizard "https://example.com" --db data.sqlite` |
+| `site-to-sqlite recon` | Network overview, sitemaps crawler, framework & structured data detector | `bun run bin/site-to-sqlite.ts recon "https://example.com"` |
 | `site-to-sqlite inspect` | SQLite database inspector, schema summary, and JSON/CSV exporter | `bun run bin/site-to-sqlite.ts inspect <output.sqlite> --exportCsv <output.csv>` |
 | `site-to-sqlite mcp` | Model Context Protocol (MCP) server for Claude Desktop, Cursor, and Zed | `bun run bin/site-to-sqlite.ts mcp` |
 
 ---
 
-## 4-Phase Scraping Workflow
+## 2-Step Scraping Workflow
 
-### Phase 1: Reconnaissance & Site Discovery
-Run the reconnaissance command against the target URL:
+### Step 1: Inspection, Candidate Discovery & User Confirmation
+Run the discovery tool against the target website:
 
 ```bash
-bun run bin/site-to-sqlite.ts recon "https://example.com"
+bun run bin/site-to-sqlite.ts discover "https://example.com" -o config.json
 ```
 
-Analyze the output:
-- **Sitemap URLs**: Look at URL path clusters (e.g. `/products/*`, `/blog/*`, `/articles/*`).
-- **Structured Data**: Check if JSON-LD (`application/ld+json`) or `__NEXT_DATA__` is present.
-- **Feeds**: Check for RSS/Atom feeds for instant data access.
+Or call the MCP tool `site_discover({ url: "https://example.com" })`.
 
-Read [recon-guide.md](./references/recon-guide.md) for detailed fast-path discovery techniques.
+The tool automatically analyzes:
+- **Repeating Collections**: Cards, product items, blog entries, review blocks.
+- **HTML Tables**: Headers `<th>` and rows `<tr><td>`.
+- **Field Candidates**: `title`, `url`, `price`, `image`, `tags` (array), `author`, `date`, `rating`, `description`.
+- **Pagination**: Next page selectors (`a[rel="next"]`, `li.next a`) and query URL patterns.
+- **Sample Records**: Live sample previews showing exact extracted data.
+
+**Confirm with User**:
+Present the discovered candidate fields, sample records, and pagination details to the user and confirm whether they want to proceed or add any custom selectors.
 
 ---
 
-### Phase 2: Formulate Extraction Configuration
-Based on recon findings, create a declarative JSON configuration file.
-
-See [extraction-patterns.md](./references/extraction-patterns.md) for full config syntax.
-
-Example `config.json`:
-```json
-{
-  "tableName": "articles",
-  "startUrls": ["https://example.com/blog"],
-  "itemSelector": ".post-card",
-  "fields": {
-    "title": "h2.title",
-    "url": { "selector": "h2.title a", "attribute": "href" },
-    "author": ".author-name",
-    "published_date": "time@datetime",
-    "snippet": ".excerpt"
-  },
-  "pagination": {
-    "nextPageSelector": "a.pagination-next"
-  },
-  "options": {
-    "concurrency": 3,
-    "delayMs": 200,
-    "maxPagesTotal": 100
-  }
-}
-```
-
----
-
-### Phase 3: Execute Headless Scraping
-Run the polite crawler engine. It handles rate-limiting, retries with exponential backoff on 429/503, checkpointing, and dynamic SQLite column creation:
+### Step 2: Execute Headless Scraping & Validate Database
+Run the polite crawler engine with the confirmed config:
 
 ```bash
-bun run bin/site-to-sqlite.ts scrape --config /path/to/config.json --db /path/to/output.sqlite
+bun run bin/site-to-sqlite.ts scrape --config ./config.json --db ./output.sqlite
 ```
 
-> [!TIP]
-> If a crawl is interrupted, re-running the exact same command will automatically skip all URLs that were already successfully crawled with HTTP 200 in the `crawled_urls` table.
+The scraper handles:
+- `@attribute` shorthand (`"a@href"`, `"time@datetime"`, `"img@src"`)
+- Auto-attribute resolution (`img` -> `src`, `a` -> `href`, `time` -> `datetime`)
+- Array fields (`array: true` -> JSON string array in SQLite)
+- Detail page following (`detailPage: { ... }`)
+- Checkpointing in `crawled_urls` and dynamic `ALTER TABLE` column additions.
 
----
-
-### Phase 4: Validate Database & Present Results
-Inspect the generated SQLite database to verify data integrity and extract summary metrics:
+After scraping, inspect and verify the database:
 
 ```bash
-bun run bin/site-to-sqlite.ts inspect /path/to/output.sqlite --exportCsv /path/to/output.csv
+bun run bin/site-to-sqlite.ts inspect ./output.sqlite --exportCsv ./output.csv
 ```
 
 Report to the user:
 - Total URLs crawled & skipped
 - Total structured records extracted
-- Summary of tables and column definitions
-- Location of the `.sqlite` file and exported `.csv` / `.json` files.
+- Summary of table schemas and sample data
+- Locations of `.sqlite` and exported `.csv` / `.json` files.

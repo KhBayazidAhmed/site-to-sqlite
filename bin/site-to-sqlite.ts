@@ -20,8 +20,10 @@ Usage:
   site-to-sqlite <command> [options]
 
 Commands:
-  recon <url> [options]       Deep website reconnaissance (sitemaps, robots, JSON-LD, feeds)
-  scrape [options]            High-speed polite scraper into SQLite with checkpointing
+  discover <url> [options]    [Step 1] Deep DOM inspection, repeating pattern & field discovery with preview
+  scrape [options]            [Step 2] High-speed polite scraper into SQLite with checkpointing
+  wizard <url> [options]      Interactive 2-step wizard (inspect -> propose/confirm -> scrape)
+  recon <url> [options]       Network reconnaissance (sitemaps, robots.txt, JSON-LD, feeds)
   inspect [dbPath] [options]  Inspect database schema, row counts, preview, or export CSV/JSON
   mcp                         Start Model Context Protocol (MCP) stdio server for AI agents
 
@@ -30,16 +32,19 @@ Options:
   -h, --help                  Show this help overview
 
 Examples:
-  # 1. Recon website structure
-  site-to-sqlite recon "https://quotes.toscrape.com"
+  # Step 1: Discover extractable fields and sample records
+  site-to-sqlite discover "https://quotes.toscrape.com" -o config.json
 
-  # 2. Scrape with config into SQLite
+  # Step 2: Scrape with confirmed config into SQLite
   site-to-sqlite scrape --config ./config.json --db ./data.sqlite
 
-  # 3. Inspect database and export
+  # Or run interactive 2-step wizard
+  site-to-sqlite wizard "https://quotes.toscrape.com" --db ./data.sqlite
+
+  # Step 3: Inspect database and export
   site-to-sqlite inspect ./data.sqlite --exportCsv ./data.csv
 
-  # 4. Run as MCP Server for Claude / Cursor
+  # Run as MCP Server for Claude / Cursor / Antigravity
   site-to-sqlite mcp
 
 Run 'site-to-sqlite <command> --help' for command-specific flags.
@@ -57,23 +62,26 @@ if (subcommand === "--version" || subcommand === "-v") {
   process.exit(0);
 }
 
-const scriptMap: Record<string, string> = {
-  recon: join(scriptsDir, "recon.ts"),
-  scrape: join(scriptsDir, "scrape.ts"),
-  inspect: join(scriptsDir, "inspect-db.ts"),
-  mcp: join(scriptsDir, "mcp-server.ts"),
+const scriptMap: Record<string, { script: string; extraArgs?: string[] }> = {
+  discover: { script: join(scriptsDir, "discover.ts") },
+  plan: { script: join(scriptsDir, "discover.ts") },
+  recon: { script: join(scriptsDir, "recon.ts") },
+  scrape: { script: join(scriptsDir, "scrape.ts") },
+  wizard: { script: join(scriptsDir, "scrape.ts"), extraArgs: ["--interactive"] },
+  inspect: { script: join(scriptsDir, "inspect-db.ts") },
+  mcp: { script: join(scriptsDir, "mcp-server.ts") },
 };
 
-const targetScript = scriptMap[subcommand];
+const match = scriptMap[subcommand];
 
-if (!targetScript) {
+if (!match) {
   console.error(`[Error] Unknown command: "${subcommand}"\n`);
   printHelp();
   process.exit(1);
 }
 
-const childArgs = args.slice(1);
-const proc = spawn(process.execPath, ["run", targetScript, ...childArgs], {
+const childArgs = [...(match.extraArgs || []), ...args.slice(1)];
+const proc = spawn(process.execPath, ["run", match.script, ...childArgs], {
   stdio: "inherit",
   env: process.env,
 });

@@ -1,64 +1,61 @@
 # AGENTS.md — Universal Agent Runbook for `site-to-sqlite`
 
-This document defines the standard operating guidelines for any autonomous AI coding agent (e.g., OpenAI Operator/Codex, Cursor, Windsurf, Antigravity, Devin) working with this repository.
+This document defines the standard operating guidelines for any autonomous AI coding agent (e.g., Google Antigravity, Claude Code, OpenAI Operator/Codex, Cursor, Windsurf, Devin) working with this repository.
 
 ---
 
 ## Primary Directive
 
-When tasked with web crawling, scraping, or extracting data from a website:
+When tasked with web crawling, scraping, or extracting data from any website:
 1. **NEVER load full raw HTML pages into the LLM context window.** This wastes tokens and risks context truncation.
-2. **Always delegate extraction and crawling to local Bun scripts** (`site-to-sqlite recon`, `site-to-sqlite scrape`, `site-to-sqlite inspect`).
+2. **Always follow the 2-Step Workflow**:
+   - **Step 1**: Run `site-to-sqlite discover <url>` to inspect the site, discover extractable repeating entities, tables, and fields, and formulate a proposal for user confirmation.
+   - **Step 2**: After confirming with the user, run `site-to-sqlite scrape --config <config.json> --db <data.sqlite>` to crawl into SQLite.
 3. Store structured outputs directly into SQLite databases (`.sqlite` / `.db`).
 
 ---
 
-## 4-Phase Operating Procedure
+## 2-Step Operating Procedure
 
-### Phase 1: Reconnaissance
-Probe the target website to discover sitemaps, robots rules, and fast-path structured data:
+### Step 1: Deep Inspection, Data Discovery & User Confirmation
+Inspect the target website to discover repeating cards, items, HTML tables, JSON-LD schemas, Next.js hydration props, pagination links, and candidate fields:
 
 ```bash
-bun run bin/site-to-sqlite.ts recon "<TARGET_URL>"
+bun run bin/site-to-sqlite.ts discover "<TARGET_URL>" -o config.json
 ```
 
-- If `__NEXT_DATA__` or Schema.org `application/ld+json` is detected, use the fast-path extraction strategy.
-- Note URL path clusters from sitemaps to plan the crawl scope.
+Or via MCP: call `site_discover({ url: "<TARGET_URL>" })`.
 
-### Phase 2: Formulate Extraction Configuration
-Write a declarative JSON config file (e.g. `config.json`) defining the target table and field selectors:
+**Present findings to the user:**
+1. List the discovered candidate entities (e.g. products, articles, quotes, tables).
+2. Show the detected fields (e.g. `title`, `price`, `url`, `image`, `tags`, `author`, `published_date`).
+3. Show live sample previews and confidence scores.
+4. **Ask the user for confirmation**: "Here is the candidate schema discovered from `<TARGET_URL>`. Would you like to proceed with scraping these fields, or should we add/modify any selectors?"
 
-```json
-{
-  "tableName": "articles",
-  "startUrls": ["https://example.com/blog"],
-  "itemSelector": ".card",
-  "fields": {
-    "title": "h2.title",
-    "url": { "selector": "a.link", "attribute": "href" },
-    "author": ".author",
-    "published_date": "time@datetime"
-  },
-  "pagination": {
-    "nextPageSelector": "a.next"
-  },
-  "options": {
-    "concurrency": 3,
-    "delayMs": 200,
-    "maxPagesTotal": 100
-  }
-}
-```
+---
 
-### Phase 3: Execute Headless Crawl
-Run the scraper. The engine automatically handles WAL-mode SQLite writes, checkpointing, retries with exponential backoff on HTTP 429/5xx, and dynamic table column additions:
+### Step 2: Headless Scraping & Database Validation
+Once the user confirms or provides adjustments, execute the scrape engine:
 
 ```bash
 bun run bin/site-to-sqlite.ts scrape --config ./config.json --db ./data.sqlite
 ```
 
-### Phase 4: Validate Database & Export
-Inspect the database to verify that data was properly saved, check row counts, and optionally export to CSV or JSON:
+Or via MCP: call `site_scrape({ config: <CONFIG_OBJECT>, dbPath: "./data.sqlite" })`.
+
+The engine automatically handles:
+- `@attribute` shorthand selectors (`"a@href"`, `"time@datetime"`, `"img@src"`)
+- Auto-attribute deduction (`img` -> `src`, `a` -> `href`, `time` -> `datetime`)
+- Array field extraction (`array: true` -> JSON string in SQLite)
+- Detail-page follow crawling (`detailPage: { ... }`)
+- WAL-mode SQLite writes & dynamic schema evolution (`ALTER TABLE ADD COLUMN`)
+- Rate-limiting jitter & exponential backoff on HTTP 429/5xx
+- Checkpoint/resume tracking in `crawled_urls`
+
+---
+
+### Validation & Export
+Inspect the database to verify that data was properly saved, check row counts, and export to CSV or JSON:
 
 ```bash
 bun run bin/site-to-sqlite.ts inspect ./data.sqlite --exportCsv ./data.csv
@@ -68,13 +65,14 @@ bun run bin/site-to-sqlite.ts inspect ./data.sqlite --exportCsv ./data.csv
 
 ## MCP Server Integration
 
-If running in an MCP-capable environment (Cursor, Claude Desktop, Zed, etc.), the MCP server can be launched directly:
+For MCP-capable environments (Claude Desktop, Cursor, Zed, Antigravity):
 
 ```bash
 bun run bin/site-to-sqlite.ts mcp
 ```
 
 ### Available MCP Tools:
-- `site_recon`: Deep website reconnaissance (sitemaps, robots, JSON-LD, Next.js props).
-- `site_scrape`: High-speed polite scraping into SQLite.
+- `site_discover`: [Step 1] Deep DOM inspection, repeating candidate discovery, field selector synthesis, and sample previews.
+- `site_recon`: Network reconnaissance (sitemaps, robots.txt, JSON-LD, feeds).
+- `site_scrape`: [Step 2] High-speed polite scraping into SQLite.
 - `site_inspect_db`: Inspect schemas, row counts, sample data, and export CSV/JSON.

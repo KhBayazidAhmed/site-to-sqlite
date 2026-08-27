@@ -9,12 +9,16 @@ The `site-to-sqlite` scraping engine uses declarative JSON configurations to par
 ```typescript
 interface ExtractorConfig {
   name?: string;               // Descriptive name of the job
-  tableName: string;           // Target SQLite table name (e.g. "products", "articles")
+  tableName: string;           // Target SQLite table name (e.g. "products", "quotes", "articles")
   startUrls: string[];         // Seed URLs or list of pages to crawl
-  itemSelector?: string;       // Repeater / Card selector (e.g. ".product-card", "article.post")
+  itemSelector?: string;       // Repeater / Card selector (e.g. ".quote", ".product-card", "article")
   fields: Record<string, FieldExtractor | string>;
+  detailPage?: {               // Optional 2nd tier detail page crawl & merge
+    linkField?: string;        // Record property containing URL (default: "url")
+    fields: Record<string, FieldExtractor | string>;
+  };
   pagination?: {
-    nextPageSelector?: string; // CSS selector for next page link (e.g. "a.next-page")
+    nextPageSelector?: string; // CSS selector for next page link (e.g. "li.next > a")
     urlPattern?: string;       // Parameterized pattern, e.g. "https://example.com/items?p={{page}}"
     startPage?: number;        // e.g. 1
     endPage?: number;          // e.g. 20
@@ -39,25 +43,29 @@ interface ExtractorConfig {
 
 ## Field Extractor Options
 
-Each field can be a simple CSS selector string (extracts trimmed text) or a detailed `FieldExtractor` object:
+Each field can be a shorthand string or a detailed `FieldExtractor` object:
 
+### 1. Shorthand String Syntax
+- `"title": "h3.title"` $\rightarrow$ extracts inner text.
+- `"link": "h3 a@href"` $\rightarrow$ extracts `href` attribute and normalizes to absolute URL.
+- `"datetime": "time@datetime"` $\rightarrow$ extracts `datetime` attribute.
+- `"image": "img@src"` $\rightarrow$ extracts `src` or `data-src` attribute.
+
+### 2. Full Object Syntax
 ```json
 {
   "price": {
-    "selector": ".price-tag",
+    "selector": [".price_color", ".price", ".current-price"],
     "attribute": "text",
     "transform": "number"
   },
-  "product_url": {
-    "selector": "h2 a",
-    "attribute": "href"
-  },
-  "thumbnail": {
-    "selector": "img.card-img",
-    "attribute": "src"
+  "tags": {
+    "selector": "a.tag",
+    "attribute": "text",
+    "array": true
   },
   "rating": {
-    "selector": "p.star-rating",
+    "selector": ".star-rating",
     "attribute": "class",
     "regex": "star-rating (\\w+)",
     "regexGroup": 1
@@ -65,22 +73,25 @@ Each field can be a simple CSS selector string (extracts trimmed text) or a deta
 }
 ```
 
-### Supported Attributes
-- `"text"`: Cleans and extracts inner text content (default).
-- `"html"`: Raw inner HTML.
-- Any HTML attribute: `"href"`, `"src"`, `"data-id"`, `"title"`, `"content"`, `"class"`, etc. (Relative URLs in `href`/`src` are automatically resolved to absolute URLs).
+### Supported Attributes & Auto-Inference
+If `attribute` is omitted:
+- `<img>` / `<source>` $\rightarrow$ automatically extracts `src` / `data-src` / `srcset`.
+- `<a>` $\rightarrow$ automatically extracts `href`.
+- `<time>` $\rightarrow$ automatically extracts `datetime` (or inner text if not present).
+- `<meta>` $\rightarrow$ automatically extracts `content`.
 
 ### Supported Transformations
-- `"trim"`: Trims surrounding whitespace.
-- `"lowercase"`: Converts text to lowercase.
-- `"number"`: Strips currency symbols and extracts numeric float/integer.
-- `"json"`: Parses JSON string into a structured object (serialized in SQLite).
+- `"trim"`: Trims whitespace (default).
+- `"number"`: Strips currency/symbols and parses float/integer.
+- `"lowercase"` / `"uppercase"`: Changes case.
+- `"stripHtml"`: Removes HTML tags.
+- `"json"`: Parses JSON string into a structured object/array.
+- `"date"`: Validates and cleans timestamp strings.
 
 ---
 
-## Example Recipes
+## Multi-Tier Scraping (Listing + Detail Page)
 
-### 1. Paginated Card Catalog (e.g. E-Commerce / Blog)
 ```json
 {
   "tableName": "books",
@@ -88,18 +99,15 @@ Each field can be a simple CSS selector string (extracts trimmed text) or a deta
   "itemSelector": "article.product_pod",
   "fields": {
     "title": "h3 a@title",
-    "price": {
-      "selector": ".price_color",
-      "transform": "number"
-    },
-    "availability": ".availability",
-    "detail_url": {
-      "selector": "h3 a",
-      "attribute": "href"
-    },
-    "thumbnail": {
-      "selector": ".image_container img",
-      "attribute": "src"
+    "price": { "selector": ".price_color", "transform": "number" },
+    "url": "h3 a@href"
+  },
+  "detailPage": {
+    "linkField": "url",
+    "fields": {
+      "upc": "table.table-striped tr:nth-child(1) td",
+      "stock_count": { "selector": "table.table-striped tr:nth-child(6) td", "transform": "number" },
+      "full_description": "#product_description + p"
     }
   },
   "pagination": {
@@ -108,26 +116,7 @@ Each field can be a simple CSS selector string (extracts trimmed text) or a deta
   "options": {
     "concurrency": 3,
     "delayMs": 200,
-    "maxPagesTotal": 50
-  }
-}
-```
-
-### 2. Parameterized Range Scraping
-```json
-{
-  "tableName": "forum_threads",
-  "startUrls": [],
-  "itemSelector": ".thread-row",
-  "fields": {
-    "title": ".thread-title",
-    "author": ".author-name",
-    "replies": { "selector": ".reply-count", "transform": "number" }
-  },
-  "pagination": {
-    "urlPattern": "https://forum.example.com/section/general?page={{page}}",
-    "startPage": 1,
-    "endPage": 10
+    "maxPagesTotal": 2
   }
 }
 ```

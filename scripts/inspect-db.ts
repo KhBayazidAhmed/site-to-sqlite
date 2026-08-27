@@ -57,9 +57,21 @@ if (values.query) {
   process.exit(0);
 }
 
-// Get all tables
+// Get all tables (excluding sqlite internal and fts shadow tables)
 const tables = db
-  .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';")
+  .prepare(`
+    SELECT name FROM sqlite_master 
+    WHERE (type='table' OR type='view') 
+      AND name NOT LIKE 'sqlite_%'
+      AND name NOT LIKE '%_fts_data'
+      AND name NOT LIKE '%_fts_idx'
+      AND name NOT LIKE '%_fts_docsize'
+      AND name NOT LIKE '%_fts_config'
+      AND name NOT LIKE '%_content'
+      AND name NOT LIKE '%_segdir'
+      AND name NOT LIKE '%_segments'
+      AND name NOT LIKE '%_stat';
+  `)
   .all() as { name: string }[];
 
 console.log("\n=======================================================");
@@ -67,44 +79,48 @@ console.log(`SQLITE DATABASE SUMMARY: ${dbPath}`);
 console.log("=======================================================");
 
 for (const { name } of tables) {
-  const countRow = db.prepare(`SELECT COUNT(*) as count FROM "${name}";`).get() as { count: number };
-  const cols = db.prepare(`PRAGMA table_info("${name}");`).all() as { name: string; type: string }[];
-  
-  console.log(`\nTable: [${name}] - Total Rows: ${countRow.count}`);
-  console.log(`   Columns: ${cols.map((c) => `${c.name} (${c.type})`).join(", ")}`);
+  try {
+    const countRow = db.prepare(`SELECT COUNT(*) as count FROM "${name}";`).get() as { count: number };
+    const cols = db.prepare(`PRAGMA table_info("${name}");`).all() as { name: string; type: string }[];
+    
+    console.log(`\nTable: [${name}] - Total Rows: ${countRow?.count ?? 0}`);
+    console.log(`   Columns: ${cols.map((c) => `${c.name} (${c.type})`).join(", ")}`);
 
-  const sampleLimit = parseInt(values.limit || "5", 10);
-  if (countRow.count > 0 && sampleLimit > 0) {
-    const samples = db.prepare(`SELECT * FROM "${name}" LIMIT ?;`).all(sampleLimit);
-    console.log(`   Sample Rows (top ${samples.length}):`);
-    console.dir(samples, { depth: 3, colors: true });
-  }
-
-  // Handle exports
-  if (values.table === name || (!values.table && name !== "crawled_urls")) {
-    if (values.exportJson) {
-      const allRows = db.prepare(`SELECT * FROM "${name}";`).all();
-      await Bun.write(values.exportJson, JSON.stringify(allRows, null, 2));
-      console.log(`\n[Exported] ${allRows.length} rows from [${name}] to JSON: ${values.exportJson}`);
+    const sampleLimit = parseInt(values.limit || "5", 10);
+    if ((countRow?.count ?? 0) > 0 && sampleLimit > 0) {
+      const samples = db.prepare(`SELECT * FROM "${name}" LIMIT ?;`).all(sampleLimit);
+      console.log(`   Sample Rows (top ${samples.length}):`);
+      console.dir(samples, { depth: 3, colors: true });
     }
 
-    if (values.exportCsv) {
-      const allRows = db.prepare(`SELECT * FROM "${name}";`).all() as Record<string, any>[];
-      if (allRows.length > 0) {
-        const headers = Object.keys(allRows[0]);
-        const csvRows = [headers.join(",")];
-        for (const r of allRows) {
-          const vals = headers.map((h) => {
-            const v = r[h];
-            if (v === null || v === undefined) return '""';
-            return `"${String(v).replace(/"/g, '""')}"`;
-          });
-          csvRows.push(vals.join(","));
+    // Handle exports
+    if (values.table === name || (!values.table && name !== "crawled_checkpoints" && name !== "crawled_urls" && name !== "hadiths_fts")) {
+      if (values.exportJson) {
+        const allRows = db.prepare(`SELECT * FROM "${name}";`).all();
+        await Bun.write(values.exportJson, JSON.stringify(allRows, null, 2));
+        console.log(`\n[Exported] ${allRows.length} rows from [${name}] to JSON: ${values.exportJson}`);
+      }
+
+      if (values.exportCsv) {
+        const allRows = db.prepare(`SELECT * FROM "${name}";`).all() as Record<string, any>[];
+        if (allRows.length > 0) {
+          const headers = Object.keys(allRows[0]);
+          const csvRows = [headers.join(",")];
+          for (const r of allRows) {
+            const vals = headers.map((h) => {
+              const v = r[h];
+              if (v === null || v === undefined) return '""';
+              return `"${String(v).replace(/"/g, '""')}"`;
+            });
+            csvRows.push(vals.join(","));
+          }
+          await Bun.write(values.exportCsv, csvRows.join("\n"));
+          console.log(`\n[Exported] ${allRows.length} rows from [${name}] to CSV: ${values.exportCsv}`);
         }
-        await Bun.write(values.exportCsv, csvRows.join("\n"));
-        console.log(`\n[Exported] ${allRows.length} rows from [${name}] to CSV: ${values.exportCsv}`);
       }
     }
+  } catch (err: any) {
+    console.log(`\nTable: [${name}] (Virtual Table / FTS) - Note: ${err.message}`);
   }
 }
 

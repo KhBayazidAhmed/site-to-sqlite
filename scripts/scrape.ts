@@ -3,22 +3,32 @@ import { Database } from "bun:sqlite";
 import * as cheerio from "cheerio";
 import { parseArgs } from "util";
 import { createHash } from "crypto";
+import { runDiscovery } from "./discover";
+import * as readline from "readline";
 
 export interface FieldExtractor {
-  selector?: string;
-  attribute?: string; // "text", "html", or attribute name like "href", "src", "data-id"
-  transform?: "trim" | "number" | "date" | "json" | "lowercase";
-  regex?: string; // Optional regex extraction
+  selector?: string | string[];
+  attribute?: string; // "text", "html", or attribute name like "href", "src", "datetime", "content"
+  array?: boolean; // If true, extracts array of all matching items
+  transform?: "trim" | "number" | "date" | "json" | "lowercase" | "uppercase" | "stripHtml";
+  regex?: string;
   regexGroup?: number;
   defaultValue?: any;
+}
+
+export interface DetailPageConfig {
+  linkField?: string; // Field in current record containing the detail URL (defaults to "url")
+  linkSelector?: string; // Alternatively, selector to extract detail URL
+  fields: Record<string, FieldExtractor | string>;
 }
 
 export interface ExtractorConfig {
   name?: string;
   tableName: string;
   startUrls: string[];
-  itemSelector?: string; // If set, extracts multiple items per page (card/repeater pattern)
+  itemSelector?: string; // Card / repeater pattern
   fields: Record<string, FieldExtractor | string>;
+  detailPage?: DetailPageConfig; // Optional 2nd tier detail page crawl
   pagination?: {
     nextPageSelector?: string;
     maxPages?: number;
@@ -54,11 +64,11 @@ export class PoliteScraper {
   private config: ExtractorConfig;
   private queue: string[] = [];
   private enqueuedSet = new Set<string>();
-  private activeWorkers = 0;
   private stats = {
     crawled: 0,
     skipped: 0,
     extracted: 0,
+    detailPagesCrawled: 0,
     errors: 0,
     startTime: Date.now(),
   };
@@ -73,7 +83,7 @@ export class PoliteScraper {
     this.db.run(`PRAGMA journal_mode = WAL;`);
     this.db.run(`PRAGMA synchronous = NORMAL;`);
 
-    // Metadata table for checkpointing and URL status
+    // Checkpoint metadata table
     this.db.run(`
       CREATE TABLE IF NOT EXISTS crawled_urls (
         url TEXT PRIMARY KEY,
@@ -85,7 +95,7 @@ export class PoliteScraper {
       );
     `);
 
-    // Ensure entity table exists
+    // Entity table
     const tableName = this.sanitizeIdentifier(this.config.tableName || "extracted_items");
     this.db.run(`
       CREATE TABLE IF NOT EXISTS "${tableName}" (
@@ -98,7 +108,8 @@ export class PoliteScraper {
   }
 
   private sanitizeIdentifier(name: string): string {
-    return name.replace(/[^a-zA-Z0-9_]/g, "_");
+    const clean = name.replace(/[^a-zA-Z0-9_]/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "");
+    return clean || "items";
   }
 
   private inferSqliteType(val: any): string {
@@ -174,7 +185,7 @@ export class PoliteScraper {
       .run(url, statusCode, durationMs, contentHash || null, error || null);
   }
 
-  private async fetchWithRetry(url: string): Promise<{ ok: boolean; status: number; html: string; error?: string; durationMs: number }> {
+  public async fetchWithRetry(url: string): Promise<{ ok: boolean; status: number; html: string; error?: string; durationMs: number }> {
     const maxRetries = this.config.options?.maxRetries ?? 3;
     const timeoutMs = this.config.options?.timeoutMs ?? 15000;
     const headers = { ...DEFAULT_HEADERS, ...(this.config.options?.headers || {}) };
@@ -217,60 +228,144 @@ export class PoliteScraper {
     return { ok: false, status: 0, html: "", error: "Max retries reached", durationMs: 0 };
   }
 
-  private extractField($: cheerio.CheerioAPI, contextEl: any, def: FieldExtractor | string): any {
-    const config: FieldExtractor = typeof def === "string" ? { selector: def, attribute: "text" } : def;
-    let target = config.selector ? $(contextEl).find(config.selector) : $(contextEl);
-    if (config.selector && !target.length && contextEl === $.root()) {
-      target = $(config.selector);
+  // Parse shorthand string (e.g. "h3 a@href" or "time@datetime" or ".price")
+  private normalizeFieldConfig(def: FieldExtractor | string): FieldExtractor {
+    if (typeof def === "object" && def !== null) {
+      return def;
     }
 
-    let rawVal: string | undefined;
-    const attr = config.attribute || "text";
+    const str = String(def).trim();
+    if (!str) return { selector: "", attribute: "text" };
 
-    if (attr === "text") {
-      rawVal = target.text();
-    } else if (attr === "html") {
-      rawVal = target.html() || undefined;
-    } else {
-      rawVal = target.attr(attr);
+    // Check for @attribute suffix (e.g. "a@href", "img@src", "time@datetime", 'meta[name="..."]@content')
+    // We match @ followed by valid attribute chars at the end of the string
+    const atMatch = str.match(/^(.*)@([a-zA-Z0-9_-]+)$/);
+    if (atMatch) {
+      return {
+        selector: atMatch[1].trim(),
+        attribute: atMatch[2].trim(),
+      };
     }
 
-    if (!rawVal) {
+    return {
+      selector: str,
+      attribute: "text",
+    };
+  }
+
+  // Extract a single field value from Cheerio context
+  private extractField($: cheerio.CheerioAPI, contextEl: any, rawDef: FieldExtractor | string): any {
+    const config = this.normalizeFieldConfig(rawDef);
+    const selectors = Array.isArray(config.selector)
+      ? config.selector
+      : config.selector
+      ? [config.selector]
+      : [""];
+
+    let targetElements: cheerio.Cheerio<any> | null = null;
+
+    // Find elements using selector fallback list
+    for (const sel of selectors) {
+      if (!sel) {
+        targetElements = $(contextEl);
+        break;
+      }
+      try {
+        let found = $(contextEl).find(sel);
+        if (found.length === 0 && contextEl === $.root()) {
+          found = $(sel);
+        }
+        if (found.length > 0) {
+          targetElements = found;
+          break;
+        }
+      } catch {}
+    }
+
+    if (!targetElements || targetElements.length === 0) {
       return config.defaultValue !== undefined ? config.defaultValue : null;
     }
 
-    let value: any = rawVal.trim();
+    // Helper to extract value from single element with auto-attribute inference
+    const extractSingle = (el: any): any => {
+      const $el = $(el);
+      let attr = config.attribute;
 
-    if (config.regex) {
-      const match = value.match(new RegExp(config.regex));
-      if (match) {
-        value = match[config.regexGroup ?? 1] ?? match[0];
+      // Auto-attribute detection if not explicitly specified
+      if (!attr || attr === "text") {
+        if ($el.is("img") || $el.is("source")) {
+          attr = $el.attr("src") ? "src" : $el.attr("data-src") ? "data-src" : $el.attr("srcset") ? "srcset" : "text";
+        } else if ($el.is("a") && !config.attribute) {
+          attr = "href";
+        } else if ($el.is("time") && !config.attribute && $el.attr("datetime")) {
+          attr = "datetime";
+        } else if ($el.is("meta") && !config.attribute) {
+          attr = "content";
+        } else {
+          attr = "text";
+        }
       }
+
+      let rawVal: string | undefined;
+      if (attr === "text") {
+        rawVal = $el.text();
+      } else if (attr === "html") {
+        rawVal = $el.html() || undefined;
+      } else {
+        rawVal = $el.attr(attr);
+      }
+
+      if (rawVal === undefined || rawVal === null) {
+        return config.defaultValue !== undefined ? config.defaultValue : null;
+      }
+
+      let value: any = String(rawVal).trim();
+
+      if (config.regex) {
+        const match = value.match(new RegExp(config.regex));
+        if (match) {
+          value = match[config.regexGroup ?? 1] ?? match[0];
+        }
+      }
+
+      if (config.transform) {
+        if (config.transform === "trim") value = String(value).trim();
+        if (config.transform === "lowercase") value = String(value).toLowerCase();
+        if (config.transform === "uppercase") value = String(value).toUpperCase();
+        if (config.transform === "stripHtml") value = String(value).replace(/<[^>]*>/g, "").trim();
+        if (config.transform === "number") {
+          const cleaned = String(value).replace(/[^0-9.-]/g, "");
+          const num = parseFloat(cleaned);
+          value = isNaN(num) ? null : num;
+        }
+        if (config.transform === "json") {
+          try {
+            value = JSON.parse(value);
+          } catch {}
+        }
+      }
+
+      return value;
+    };
+
+    // If array mode is enabled
+    if (config.array) {
+      const results: any[] = [];
+      targetElements.each((_, el) => {
+        const itemVal = extractSingle(el);
+        if (itemVal !== null && itemVal !== undefined) results.push(itemVal);
+      });
+      return results.length > 0 ? results : config.defaultValue ?? [];
     }
 
-    if (config.transform) {
-      if (config.transform === "trim") value = String(value).trim();
-      if (config.transform === "lowercase") value = String(value).toLowerCase();
-      if (config.transform === "number") {
-        const cleaned = String(value).replace(/[^0-9.-]/g, "");
-        const num = parseFloat(cleaned);
-        value = isNaN(num) ? null : num;
-      }
-      if (config.transform === "json") {
-        try {
-          value = JSON.parse(value);
-        } catch {}
-      }
-    }
-
-    return value;
+    return extractSingle(targetElements.first());
   }
 
   private extractPageData(url: string, html: string): Record<string, any>[] {
     const $ = cheerio.load(html);
     const results: Record<string, any>[] = [];
 
-    // Check for itemSelector (multiple items per page)
+    // Repeater / Card extraction
     if (this.config.itemSelector) {
       const items = $(this.config.itemSelector);
       items.each((_, el) => {
@@ -278,9 +373,9 @@ export class PoliteScraper {
         for (const [key, fieldDef] of Object.entries(this.config.fields)) {
           record[key] = this.extractField($, el, fieldDef);
         }
-        // If relative links were extracted, normalize them
+        // Normalize relative URLs in href / src fields
         for (const [k, v] of Object.entries(record)) {
-          if (typeof v === "string" && (v.startsWith("/") || v.startsWith("./")) && !v.startsWith("//")) {
+          if (typeof v === "string" && (v.startsWith("/") || v.startsWith("./") || v.startsWith("../")) && !v.startsWith("//")) {
             try {
               record[k] = new URL(v, url).toString();
             } catch {}
@@ -295,7 +390,7 @@ export class PoliteScraper {
         record[key] = this.extractField($, $.root(), fieldDef);
       }
       for (const [k, v] of Object.entries(record)) {
-        if (typeof v === "string" && (v.startsWith("/") || v.startsWith("./")) && !v.startsWith("//")) {
+        if (typeof v === "string" && (v.startsWith("/") || v.startsWith("./") || v.startsWith("../")) && !v.startsWith("//")) {
           try {
             record[k] = new URL(v, url).toString();
           } catch {}
@@ -307,25 +402,52 @@ export class PoliteScraper {
     return results;
   }
 
+  // Crawl linked detail page and merge fields into record
+  private async enrichWithDetailPage(record: Record<string, any>, currentUrl: string): Promise<Record<string, any>> {
+    if (!this.config.detailPage) return record;
+
+    let detailUrl: string | undefined = record[this.config.detailPage.linkField || "url"];
+    if (!detailUrl && this.config.detailPage.linkSelector) {
+      // Fallback
+    }
+
+    if (!detailUrl || typeof detailUrl !== "string" || !detailUrl.startsWith("http")) {
+      return record;
+    }
+
+    try {
+      const res = await this.fetchWithRetry(detailUrl);
+      if (res.ok && res.html) {
+        this.stats.detailPagesCrawled++;
+        const $ = cheerio.load(res.html);
+        for (const [key, fieldDef] of Object.entries(this.config.detailPage.fields)) {
+          record[key] = this.extractField($, $.root(), fieldDef);
+        }
+      }
+    } catch (err) {
+      console.warn(`[Warning] Could not crawl detail page: ${detailUrl}`);
+    }
+
+    return record;
+  }
+
   private discoverNextLinks(url: string, html: string): string[] {
     const discovered: string[] = [];
     const $ = cheerio.load(html);
 
-    // Pagination selector
     if (this.config.pagination?.nextPageSelector) {
       const nextHref = $(this.config.pagination.nextPageSelector).attr("href");
-      if (nextHref) {
+      if (nextHref && !nextHref.startsWith("#") && !nextHref.startsWith("javascript:")) {
         try {
           discovered.push(new URL(nextHref, url).toString());
         } catch {}
       }
     }
 
-    // Link discovery selector
     if (this.config.linkDiscovery?.selector) {
       $(this.config.linkDiscovery.selector).each((_, el) => {
         const href = $(el).attr("href");
-        if (href) {
+        if (href && !href.startsWith("#") && !href.startsWith("javascript:")) {
           try {
             const resolved = new URL(href, url).toString();
             if (this.config.linkDiscovery?.urlRegex) {
@@ -355,8 +477,7 @@ export class PoliteScraper {
     }
   }
 
-  public async run(): Promise<{ crawled: number; extracted: number; skipped: number; errors: number }> {
-    // Generate parameterized pagination if specified
+  public async run(): Promise<{ crawled: number; extracted: number; skipped: number; detailPagesCrawled: number; errors: number }> {
     if (this.config.pagination?.urlPattern && this.config.pagination.startPage !== undefined && this.config.pagination.endPage !== undefined) {
       const pageUrls: string[] = [];
       for (let p = this.config.pagination.startPage; p <= this.config.pagination.endPage; p++) {
@@ -382,14 +503,12 @@ export class PoliteScraper {
             const url = this.queue.shift();
             if (!url) break;
 
-            // Checkpoint check
             if (this.isAlreadyCrawled(url)) {
               this.stats.skipped++;
               process.stdout.write(`\r[RESUME] Skipped already crawled (${this.stats.skipped}): ${url.slice(0, 70)}...`);
               continue;
             }
 
-            // Polite jitter delay (150ms - 300ms)
             const jitter = delayMs + (Math.random() * 150 - 75);
             await Bun.sleep(Math.max(jitter, 50));
 
@@ -401,11 +520,14 @@ export class PoliteScraper {
             if (res.ok && res.html) {
               this.stats.crawled++;
               const extractedRecords = this.extractPageData(url, res.html);
-              for (const item of extractedRecords) {
+
+              for (let item of extractedRecords) {
+                if (this.config.detailPage) {
+                  item = await this.enrichWithDetailPage(item, url);
+                }
                 this.insertRecord(this.config.tableName, url, item);
               }
 
-              // Discover next URLs
               const nextUrls = this.discoverNextLinks(url, res.html);
               this.enqueue(nextUrls);
 
@@ -423,11 +545,14 @@ export class PoliteScraper {
 
     await Promise.all(workers);
     console.log(`\n\n[Scrape Completed]`);
-    console.log(`   Total Crawled:   ${this.stats.crawled}`);
-    console.log(`   Total Extracted: ${this.stats.extracted} records`);
-    console.log(`   Total Skipped:   ${this.stats.skipped} (from previous checkpoints)`);
-    console.log(`   Total Errors:    ${this.stats.errors}`);
-    console.log(`   Time Elapsed:    ${((Date.now() - this.stats.startTime) / 1000).toFixed(1)}s\n`);
+    console.log(`   Total Pages Crawled:   ${this.stats.crawled}`);
+    if (this.stats.detailPagesCrawled > 0) {
+      console.log(`   Detail Pages Crawled:  ${this.stats.detailPagesCrawled}`);
+    }
+    console.log(`   Total Rows Extracted:  ${this.stats.extracted} records`);
+    console.log(`   Total Skipped (WAL):   ${this.stats.skipped}`);
+    console.log(`   Total Errors:          ${this.stats.errors}`);
+    console.log(`   Time Elapsed:          ${((Date.now() - this.stats.startTime) / 1000).toFixed(1)}s\n`);
 
     return this.stats;
   }
@@ -435,6 +560,74 @@ export class PoliteScraper {
   public close() {
     this.db.close();
   }
+}
+
+// Interactive Wizard for CLI (Step 1 Inspection -> Prompt Confirmation -> Step 2 Scraping)
+async function runInteractiveWizard(url: string, dbPath: string) {
+  console.log(`\n================================================================================`);
+  console.log(`  STEP 1: INSPECTION & CANDIDATE DATA PROPOSAL`);
+  console.log(`================================================================================`);
+  console.log(`Probing "${url}"...\n`);
+
+  const report = await runDiscovery(url);
+
+  if (report.candidates.length === 0) {
+    console.error(`[Error] No extractable structures found on ${url}`);
+    process.exit(1);
+  }
+
+  console.log(`Found ${report.totalCandidatesFound} candidate data structure(s) on ${report.pageTitle}:\n`);
+
+  report.candidates.forEach((cand, idx) => {
+    console.log(`[${idx + 1}] ${cand.title}`);
+    console.log(`    Table: "${cand.suggestedTableName}" | Items: ~${cand.itemCountOnPage} | Confidence: ${cand.confidence.toUpperCase()}`);
+    console.log(`    Fields (${Object.keys(cand.fields).length}): ${Object.keys(cand.fields).join(", ")}`);
+    if (cand.sampleRecords[0]) {
+      console.log(`    Sample: ${JSON.stringify(cand.sampleRecords[0]).slice(0, 110)}...`);
+    }
+    console.log("");
+  });
+
+  const rlPrompt = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  const ask = (q: string): Promise<string> => new Promise((resolve) => rlPrompt.question(q, resolve));
+
+  const chosenIndexStr = await ask(`Select candidate number to scrape [1-${report.candidates.length}] (default: 1): `);
+  const chosenIndex = parseInt(chosenIndexStr || "1", 10) - 1;
+  const chosen = report.candidates[chosenIndex] || report.candidates[0];
+
+  console.log(`\nSelected: "${chosen.title}"`);
+  console.table(
+    Object.values(chosen.fields).map((f) => ({
+      "Field Name": f.name,
+      "Selector / Path": f.selector || "(self)",
+      Attribute: f.attribute || "text",
+      Type: f.inferredType,
+    }))
+  );
+
+  const confirm = await ask(`Proceed to Step 2 (Scrape into "${dbPath}")? [Y/n]: `);
+  rlPrompt.close();
+
+  if (confirm.toLowerCase() === "n" || confirm.toLowerCase() === "no") {
+    console.log("\nScrape cancelled by user. You can export the config with:");
+    console.log(`  bun run bin/site-to-sqlite.ts discover "${url}" -o config.json`);
+    process.exit(0);
+  }
+
+  console.log(`\n================================================================================`);
+  console.log(`  STEP 2: EXECUTING SCRAPING INTO SQLITE`);
+  console.log(`================================================================================\n`);
+
+  const scraper = new PoliteScraper(dbPath, chosen.generatedConfig);
+  await scraper.run();
+  scraper.close();
+
+  console.log(`Done! Inspect your database using:`);
+  console.log(`  bun run bin/site-to-sqlite.ts inspect ${dbPath}\n`);
 }
 
 // CLI Execution
@@ -446,24 +639,36 @@ if (import.meta.main) {
       db: { type: "string", short: "d", default: "data.sqlite" },
       url: { type: "string", short: "u" },
       table: { type: "string", short: "t", default: "items" },
-      concurrency: { type: "string", default: "3" },
-      delay: { type: "string", default: "200" },
+      interactive: { type: "boolean", short: "i", default: false },
+      concurrency: { type: "string" },
+      delay: { type: "string" },
       limit: { type: "string" },
       help: { type: "boolean", short: "h" },
     },
     allowPositionals: true,
   });
 
-  if (values.help || (!values.config && !values.url && positionals.length === 0)) {
+  const targetUrl = values.url || positionals[0];
+
+  if (values.help || (!values.config && !targetUrl)) {
     console.log(`
 Polite Web Scraper to SQLite (site-to-sqlite)
+============================================
+
 Usage:
-  bun run scripts/scrape.ts --config <config.json> [options]
-  bun run scripts/scrape.ts --url <url> --table <name> [options]
+  # 1. Scrape with custom JSON config:
+  bun run scripts/scrape.ts --config <config.json> --db <data.sqlite>
+
+  # 2. Interactive 2-step wizard (inspect -> confirm -> scrape):
+  bun run scripts/scrape.ts <url> --interactive --db <data.sqlite>
+
+  # 3. Automated heuristic scrape:
+  bun run scripts/scrape.ts <url> --table <name> --db <data.sqlite>
 
 Options:
   -c, --config <file>     JSON config file defining extraction rules
-  -u, --url <url>         Single start URL (uses automated heuristic extraction)
+  -u, --url <url>         Start URL
+  -i, --interactive       Interactive 2-step wizard (inspect -> confirm -> scrape)
   -d, --db <file>         SQLite database output path (default: data.sqlite)
   -t, --table <name>      Target SQLite table name (default: items)
   --concurrency <num>     Number of parallel workers (default: 3, max: 10)
@@ -474,6 +679,14 @@ Options:
     process.exit(0);
   }
 
+  const dbPath = values.db || "data.sqlite";
+
+  // Interactive 2-Step Wizard
+  if (values.interactive && targetUrl) {
+    await runInteractiveWizard(targetUrl, dbPath);
+    process.exit(0);
+  }
+
   let extractorConfig: ExtractorConfig;
 
   if (values.config) {
@@ -481,7 +694,6 @@ Options:
     extractorConfig = JSON.parse(configText);
   } else {
     // Basic automatic extractor config
-    const targetUrl = values.url || positionals[0];
     extractorConfig = {
       tableName: values.table || "items",
       startUrls: [targetUrl],
@@ -512,7 +724,6 @@ Options:
     };
   }
 
-  const dbPath = values.db || "data.sqlite";
   const scraper = new PoliteScraper(dbPath, extractorConfig);
   await scraper.run();
   scraper.close();
