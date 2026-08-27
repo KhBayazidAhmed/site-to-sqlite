@@ -1,38 +1,37 @@
 ---
 name: site-to-sqlite
-description: Token-efficient web reconnaissance, pattern discovery, and polite SQLite scraper powered by Bun. Discovers site structure, sitemaps, JSON-LD, and Next.js hydration payloads, synthesizes lightweight extraction rules, and crawls web data into structured SQLite databases without bloating the LLM context window. Use when asked to crawl, scrape, extract, or archive website data into SQLite or CSV/JSON.
+description: Universal token-efficient web reconnaissance, pattern discovery, and polite SQLite scraper powered by Bun for Antigravity, Claude, Cursor, and any AI agent. Discovers site structure, sitemaps, JSON-LD, and Next.js hydration payloads, synthesizes lightweight extraction rules, and crawls web data into structured SQLite databases without bloating the LLM context window. Use when asked to crawl, scrape, extract, or archive website data into SQLite or CSV/JSON.
 ---
 
-# Site-to-SQLite Web Reconnaissance & Extraction Engine
+# Site-to-SQLite Universal Web Reconnaissance & Extraction Engine
 
 Perform token-efficient, high-speed website reconnaissance and polite data extraction into local SQLite databases using the pre-bundled Bun scripts.
 
 ## Golden Rules
-1. **Never dump full HTML into LLM context**: Use `scripts/recon.ts` to discover patterns and `scripts/scrape.ts` to crawl and extract data directly on the user's machine.
+1. **Never dump full HTML into LLM context**: Use `recon` to discover patterns and `scrape` to crawl and extract data directly on the machine.
 2. **Be polite to target servers**: Keep default concurrency between 2–5 workers with 150–300ms jitter delay. Never hammer target endpoints with abusive bursts.
-3. **Always inspect and verify**: After extraction, run `scripts/inspect-db.ts` to verify row counts, schema correctness, and present clear summary metrics to the user.
+3. **Always inspect and verify**: After extraction, run `inspect` to verify row counts, schema correctness, and present clear summary metrics.
 
 ---
 
-## Tool Reference
+## Tool & CLI Reference
 
-The skill scripts are located at `~/.gemini/antigravity/skills/site-to-sqlite/scripts/`:
-
-| Script | Purpose | Command Example |
+| Command | Purpose | Example |
 |---|---|---|
-| [`recon.ts`](./scripts/recon.ts) | Site overview, sitemap crawler, framework & structured data detector | `bun run ~/.gemini/antigravity/skills/site-to-sqlite/scripts/recon.ts <URL>` |
-| [`scrape.ts`](./scripts/scrape.ts) | High-speed crawler engine with `bun:sqlite`, checkpoint/resume, auto-schema evolution | `bun run ~/.gemini/antigravity/skills/site-to-sqlite/scripts/scrape.ts --config <config.json> --db <output.sqlite>` |
-| [`inspect-db.ts`](./scripts/inspect-db.ts) | SQLite database inspector, schema summary, and JSON/CSV exporter | `bun run ~/.gemini/antigravity/skills/site-to-sqlite/scripts/inspect-db.ts -d <output.sqlite> --exportCsv <output.csv>` |
+| `site-to-sqlite recon` | Site overview, sitemap crawler, framework & structured data detector | `bun run bin/site-to-sqlite.ts recon "https://example.com"` |
+| `site-to-sqlite scrape` | High-speed crawler engine with `bun:sqlite`, checkpoint/resume, auto-schema evolution | `bun run bin/site-to-sqlite.ts scrape --config <config.json> --db <output.sqlite>` |
+| `site-to-sqlite inspect` | SQLite database inspector, schema summary, and JSON/CSV exporter | `bun run bin/site-to-sqlite.ts inspect <output.sqlite> --exportCsv <output.csv>` |
+| `site-to-sqlite mcp` | Model Context Protocol (MCP) server for Claude Desktop, Cursor, and Zed | `bun run bin/site-to-sqlite.ts mcp` |
 
 ---
 
 ## 4-Phase Scraping Workflow
 
 ### Phase 1: Reconnaissance & Site Discovery
-Run the reconnaissance script against the target URL to discover `robots.txt`, sitemaps, framework payloads, and URL patterns:
+Run the reconnaissance command against the target URL:
 
 ```bash
-bun run ~/.gemini/antigravity/skills/site-to-sqlite/scripts/recon.ts "https://example.com"
+bun run bin/site-to-sqlite.ts recon "https://example.com"
 ```
 
 Analyze the output:
@@ -45,7 +44,7 @@ Read [recon-guide.md](./references/recon-guide.md) for detailed fast-path discov
 ---
 
 ### Phase 2: Formulate Extraction Configuration
-Based on the recon findings, create a declarative JSON configuration file (e.g., in the workspace or scratch folder).
+Based on recon findings, create a declarative JSON configuration file.
 
 See [extraction-patterns.md](./references/extraction-patterns.md) for full config syntax.
 
@@ -57,10 +56,7 @@ Example `config.json`:
   "itemSelector": ".post-card",
   "fields": {
     "title": "h2.title",
-    "url": {
-      "selector": "h2.title a",
-      "attribute": "href"
-    },
+    "url": { "selector": "h2.title a", "attribute": "href" },
     "author": ".author-name",
     "published_date": "time@datetime",
     "snippet": ".excerpt"
@@ -82,9 +78,7 @@ Example `config.json`:
 Run the polite crawler engine. It handles rate-limiting, retries with exponential backoff on 429/503, checkpointing, and dynamic SQLite column creation:
 
 ```bash
-bun run ~/.gemini/antigravity/skills/site-to-sqlite/scripts/scrape.ts \
-  --config /path/to/config.json \
-  --db /path/to/output.sqlite
+bun run bin/site-to-sqlite.ts scrape --config /path/to/config.json --db /path/to/output.sqlite
 ```
 
 > [!TIP]
@@ -96,9 +90,7 @@ bun run ~/.gemini/antigravity/skills/site-to-sqlite/scripts/scrape.ts \
 Inspect the generated SQLite database to verify data integrity and extract summary metrics:
 
 ```bash
-bun run ~/.gemini/antigravity/skills/site-to-sqlite/scripts/inspect-db.ts \
-  -d /path/to/output.sqlite \
-  --exportCsv /path/to/output.csv
+bun run bin/site-to-sqlite.ts inspect /path/to/output.sqlite --exportCsv /path/to/output.csv
 ```
 
 Report to the user:

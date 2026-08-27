@@ -1,13 +1,37 @@
 {
   "name": "site-to-sqlite",
-  "version": "1.0.0",
-  "description": "Token-efficient web reconnaissance, pattern discovery, and polite SQLite scraper powered by Bun",
+  "version": "1.1.0",
+  "description": "Token-efficient web reconnaissance, pattern discovery, and polite SQLite scraper powered by Bun for all AI agents",
+  "main": "bin/site-to-sqlite.ts",
   "type": "module",
+  "bin": {
+    "site-to-sqlite": "./bin/site-to-sqlite.ts"
+  },
   "scripts": {
+    "cli": "bun run bin/site-to-sqlite.ts",
     "recon": "bun run scripts/recon.ts",
     "scrape": "bun run scripts/scrape.ts",
-    "inspect": "bun run scripts/inspect-db.ts"
+    "inspect": "bun run scripts/inspect-db.ts",
+    "mcp": "bun run scripts/mcp-server.ts"
   },
+  "keywords": [
+    "antigravity",
+    "agent",
+    "ai",
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "cursor",
+    "windsurf",
+    "bun",
+    "sqlite",
+    "web-scraping",
+    "crawler",
+    "cheerio",
+    "typescript"
+  ],
+  "author": "KhBayazidAhmed",
+  "license": "MIT",
   "dependencies": {
     "cheerio": "^1.0.0-rc.12"
   },
