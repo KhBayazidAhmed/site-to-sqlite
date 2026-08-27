@@ -377,7 +377,7 @@ Options:
     }
   } else {
     console.log("\n=======================================================");
-    console.log(`🔍 RECONNAISSANCE REPORT: ${report.targetUrl}`);
+    console.log(`RECONNAISSANCE REPORT: ${report.targetUrl}`);
     console.log("=======================================================");
     console.log(`Base URL:     ${report.baseUrl}`);
     console.log(`HTTP Status:  ${report.serverInfo?.status || "N/A"}`);
@@ -389,17 +389,17 @@ Options:
     console.log(`Discovered:   ${report.sitemaps.totalUrls} URLs from sitemaps`);
     
     if (Object.keys(report.sitemaps.urlPatterns).length > 0) {
-      console.log("\n📁 URL Structure Breakdown:");
+      console.log("\nURL Structure Breakdown:");
       for (const [pattern, count] of Object.entries(report.sitemaps.urlPatterns)) {
         console.log(`   ${pattern.padEnd(25)} : ${count} URLs`);
       }
     }
 
     if (report.samplePayloads.hasJsonLd) {
-      console.log("\n⚡ Fast-Path Extraction Available: JSON-LD Structured Data detected!");
+      console.log("\n[Fast-Path] JSON-LD Structured Data detected.");
     }
     if (report.samplePayloads.hasHydrationData) {
-      console.log(`\n⚡ Fast-Path Extraction Available: Hydration state (${report.samplePayloads.hydrationType}) detected!`);
+      console.log(`\n[Fast-Path] Hydration state (${report.samplePayloads.hydrationType}) detected.`);
     }
 
     console.log("=======================================================\n");

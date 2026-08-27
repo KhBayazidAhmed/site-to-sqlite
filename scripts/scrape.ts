@@ -371,7 +371,7 @@ export class PoliteScraper {
     const delayMs = this.config.options?.delayMs ?? 200;
     const maxPages = this.config.options?.maxPagesTotal ?? Infinity;
 
-    console.log(`\n🚀 Starting Polite Scraper for table: "${this.config.tableName}"`);
+    console.log(`\n[Starting Scraper] Table: "${this.config.tableName}"`);
     console.log(`   Initial Queue: ${this.queue.length} URLs | Concurrency: ${concurrency} | Base Delay: ${delayMs}ms\n`);
 
     const workers: Promise<void>[] = [];
@@ -414,7 +414,7 @@ export class PoliteScraper {
               );
             } else {
               this.stats.errors++;
-              console.error(`\n❌ Failed to crawl ${url} (Status: ${res.status}, Error: ${res.error || "None"})`);
+              console.error(`\n[Error] Failed to crawl ${url} (Status: ${res.status}, Error: ${res.error || "None"})`);
             }
           }
         })()
@@ -422,7 +422,7 @@ export class PoliteScraper {
     }
 
     await Promise.all(workers);
-    console.log(`\n\n✅ Scrape Completed!`);
+    console.log(`\n\n[Scrape Completed]`);
     console.log(`   Total Crawled:   ${this.stats.crawled}`);
     console.log(`   Total Extracted: ${this.stats.extracted} records`);
     console.log(`   Total Skipped:   ${this.stats.skipped} (from previous checkpoints)`);

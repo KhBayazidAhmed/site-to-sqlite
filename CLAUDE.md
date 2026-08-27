@@ -4,7 +4,7 @@ Commands, architecture, and coding conventions for Claude Code and Claude Deskto
 
 ---
 
-## 🛠️ CLI & Build Commands
+## CLI & Build Commands
 
 - **Install dependencies**: `bun install`
 - **Unified CLI Entry**: `bun run cli -- <subcommand>` or `bun run bin/site-to-sqlite.ts <subcommand>`
@@ -15,16 +15,16 @@ Commands, architecture, and coding conventions for Claude Code and Claude Deskto
 
 ---
 
-## 🏗️ Architecture & Philosophy
+## Architecture & Philosophy
 
 1. **Token Efficiency**: Never fetch or parse entire multi-megabyte HTML files inside LLM context. Always invoke the local Bun scraper scripts and review only the SQLite summary or small sample records.
-2. **Polite Crawling**: Default to 3 workers and 150–300ms random jitter delay. Always use WAL-mode SQLite for zero contention.
+2. **Polite Crawling**: Default to 3 workers and 150-300ms random jitter delay. Always use WAL-mode SQLite for zero contention.
 3. **Dynamic Schema Evolution**: The crawler automatically runs `ALTER TABLE ... ADD COLUMN` when encountering previously unseen fields in extracted objects.
 4. **Checkpoint & Resume**: If an extraction is cancelled or restarted, `crawled_urls` tracks HTTP 200 URLs to avoid redundant requests.
 
 ---
 
-## 🔌 Claude Desktop MCP Configuration
+## Claude Desktop MCP Configuration
 
 Add this server to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 

@@ -10,11 +10,11 @@ Always prefer the highest-tier method available:
 
 | Priority | Method | Speed & Efficiency | Best For |
 |---|---|---|---|
-| **Tier 1** | **Internal JSON API / GraphQL** | ⚡ Ultra-fast, pure structured data | SPAs, search endpoints, pagination APIs |
-| **Tier 2** | **`__NEXT_DATA__` / Hydration State** | ⚡ Instant single-request full page state | Next.js, Nuxt, Remix, Astro websites |
-| **Tier 3** | **JSON-LD (`application/ld+json`)** | ⚡ High accuracy schema.org data | Articles, products, recipes, event pages |
-| **Tier 4** | **Sitemap + CSS Card Extractor** | 🚀 High speed with `cheerio` + Bun | Static SSR sites, blogs, catalogs |
-| **Tier 5** | **Headless Browser / DevTools MCP** | 🐢 Heavy resource fallback | Dynamic JS rendering with bot verification |
+| **Tier 1** | **Internal JSON API / GraphQL** | Ultra-fast, pure structured data | SPAs, search endpoints, pagination APIs |
+| **Tier 2** | **`__NEXT_DATA__` / Hydration State** | Instant single-request full page state | Next.js, Nuxt, Remix, Astro websites |
+| **Tier 3** | **JSON-LD (`application/ld+json`)** | High accuracy schema.org data | Articles, products, recipes, event pages |
+| **Tier 4** | **Sitemap + CSS Card Extractor** | High speed with `cheerio` + Bun | Static SSR sites, blogs, catalogs |
+| **Tier 5** | **Headless Browser / DevTools MCP** | Heavy resource fallback | Dynamic JS rendering with bot verification |
 
 ---
 

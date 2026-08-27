@@ -38,7 +38,7 @@ Options:
 const dbPath = values.db || positionals[0] || "data.sqlite";
 const file = Bun.file(dbPath);
 if (!(await file.exists())) {
-  console.error(`❌ SQLite database file not found at: ${dbPath}`);
+  console.error(`[Error] SQLite database file not found at: ${dbPath}`);
   process.exit(1);
 }
 
@@ -51,7 +51,7 @@ if (values.query) {
     console.log(`Results: ${rows.length} rows\n`);
     console.table(rows.slice(0, parseInt(values.limit || "20", 10)));
   } catch (err: any) {
-    console.error("SQL Error:", err.message);
+    console.error("[SQL Error]:", err.message);
   }
   db.close();
   process.exit(0);
@@ -63,14 +63,14 @@ const tables = db
   .all() as { name: string }[];
 
 console.log("\n=======================================================");
-console.log(`📊 SQLITE DATABASE SUMMARY: ${dbPath}`);
+console.log(`SQLITE DATABASE SUMMARY: ${dbPath}`);
 console.log("=======================================================");
 
 for (const { name } of tables) {
   const countRow = db.prepare(`SELECT COUNT(*) as count FROM "${name}";`).get() as { count: number };
   const cols = db.prepare(`PRAGMA table_info("${name}");`).all() as { name: string; type: string }[];
   
-  console.log(`\n📁 Table: [${name}] — Total Rows: ${countRow.count}`);
+  console.log(`\nTable: [${name}] - Total Rows: ${countRow.count}`);
   console.log(`   Columns: ${cols.map((c) => `${c.name} (${c.type})`).join(", ")}`);
 
   const sampleLimit = parseInt(values.limit || "5", 10);
@@ -85,7 +85,7 @@ for (const { name } of tables) {
     if (values.exportJson) {
       const allRows = db.prepare(`SELECT * FROM "${name}";`).all();
       await Bun.write(values.exportJson, JSON.stringify(allRows, null, 2));
-      console.log(`\n💾 Exported ${allRows.length} rows from [${name}] to JSON: ${values.exportJson}`);
+      console.log(`\n[Exported] ${allRows.length} rows from [${name}] to JSON: ${values.exportJson}`);
     }
 
     if (values.exportCsv) {
@@ -102,7 +102,7 @@ for (const { name } of tables) {
           csvRows.push(vals.join(","));
         }
         await Bun.write(values.exportCsv, csvRows.join("\n"));
-        console.log(`\n💾 Exported ${allRows.length} rows from [${name}] to CSV: ${values.exportCsv}`);
+        console.log(`\n[Exported] ${allRows.length} rows from [${name}] to CSV: ${values.exportCsv}`);
       }
     }
   }

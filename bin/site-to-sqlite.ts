@@ -13,8 +13,8 @@ const subcommand = args[0];
 
 function printHelp() {
   console.log(`
-🌐 site-to-sqlite — High-Speed Web Reconnaissance & SQLite Extractor
-=====================================================================
+site-to-sqlite — High-Speed Web Reconnaissance & SQLite Extractor
+=================================================================
 
 Usage:
   site-to-sqlite <command> [options]
@@ -67,7 +67,7 @@ const scriptMap: Record<string, string> = {
 const targetScript = scriptMap[subcommand];
 
 if (!targetScript) {
-  console.error(`❌ Unknown command: "${subcommand}"\n`);
+  console.error(`[Error] Unknown command: "${subcommand}"\n`);
   printHelp();
   process.exit(1);
 }
